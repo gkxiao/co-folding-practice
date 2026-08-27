@@ -1,0 +1,1 @@
+A personal collection of practical experiences, troubleshooting notes, and scripts for protein-ligand co-folding (Boltz, AlphaFold3, Chai-1, etc.) — from structure prediction to downstream preparation.
