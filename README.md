@@ -74,43 +74,6 @@ mv x2_clean.a3m x2.a3m
 tr -d '\000\r' < x2.a3m > x2_clean.a3m && mv x2_clean.a3m x2.a3m
 ```
 
-### 2.3 验证清理结果
-
-```bash
-# 确认没有 ^M 符号
-cat -v x2.a3m | head -5
-
-# 确认没有空字符
-grep -c '\x00' x2.a3m || echo "没有空字符"
-
-# 确认文件行数
-wc -l x2.a3m
-```
-
-**预期输出**（干净的文件）：
-```
->colabfold_job
-YQLFEELGKGAFSVVRRCMKIPTGQEYAAKIINTKKLSARDHQKLEREARICRLLKHPNIVRLHDS...
->UniRef100_UPI000D730C67  316  0.903  2.635E-93  0  258  259  22  280  492
-YELKEELGKGAFSIVRRCVQKATGLEFAAKIINTKKLSARDHQKLEREARICRLLKHPNIVRLHDS...
-...
-```
-
----
-
-## 3. 用于 Boltz 预测
-
-后处理完成后，可以用在 Boltz 预测中：
-
-```bash
-# 运行 Boltz 预测
-boltz predict E12.yaml \
-  --use_potentials \
-  --diffusion_samples 10 \
-  --sampling_steps 1000 \
-  --step_scale 1.5
-```
-
 ---
 
 ## 4. 常见错误及解决
@@ -132,13 +95,6 @@ python colabfold_msa.py -f input.fasta -o input.a3m
 
 # Step 2: 后处理（必须！）
 tr -d '\000\r' < input.a3m > input_clean.a3m && mv input_clean.a3m input.a3m
-
-# Step 3: 验证清理结果
-cat -v input.a3m | head -5  # 确认没有 ^M
-grep -c '\x00' input.a3m || echo "没有空字符"
-
-# Step 4: 运行 Boltz/OpenFold
-boltz predict E12.yaml --use_potentials --diffusion_samples 10 --sampling_steps 1000 --step_scale 1.5
 ```
 
 > **注意**：`tr -d '\000\r'` 命令会删除所有空字符和回车符，这是使用 ColabFold API 生成的 A3M 文件必须的后处理步骤！
