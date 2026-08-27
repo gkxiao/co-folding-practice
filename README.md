@@ -138,7 +138,7 @@ boltz_results_8_affinity/predictions/8_affinity
 
 > 注意：这两个输出头是在**不同的数据集、不同监督信号**下训练的，用途不同：
 >
-> - `affinity_probability_binary` → 用于**命中发现**（区分 binder vs decoy，虚拟筛选阶段）
+> - `affinity_probability_binary` → 用于**苗头化合物发现**（区分 binder vs decoy，虚拟筛选阶段）
 > - `affinity_pred_value` → 用于**先导优化**（同系物间相对排序 / SAR 分析），是 IC50 类似量纲，assay 依赖
 
 #### 数值解读
