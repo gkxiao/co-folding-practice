@@ -1,5 +1,5 @@
 
-名为 **`boltz_prepwizard.py`** 的 Python 脚本，其核心功能是：**将 Boltz 共折叠（co-folding）预测输出的 CIF 文件，用 Schrödinger 的 PrepWizard 工具进行结构准备，并做一系列后处理，最终输出可直接用于后续计算的 Maestro MAEGZ 文件**。
+名为 **`sch_boltz_prepwizard.py`** 的 Python 脚本，其核心功能是：**将 Boltz 共折叠（co-folding）预测输出的 CIF 文件，用 Schrödinger 的 PrepWizard 工具进行结构准备，并做一系列后处理，最终输出可直接用于后续计算的 Maestro MAEGZ 文件**。
 
 下面按模块逐段解释其功能：
 
@@ -121,5 +121,5 @@ Boltz 预测输出的 CIF 文件
 典型用法（如示例中针对 EP262_K28 系统、以 7S8L 为参考、编号平移 27）：
 
 ```bash
-$SCHRODINGER/run boltz_prepwizard.py -i EP262_K28.yaml -ref 7S8L.maegz -renumber_shift 27
+$SCHRODINGER/run sch_boltz_prepwizard.py -i EP262_K28.yaml -ref 7S8L.maegz -renumber_shift 27
 ```
