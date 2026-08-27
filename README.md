@@ -1,12 +1,9 @@
-# co-folding-practice
-A personal collection of practical experiences, troubleshooting notes, and scripts for protein-ligand co-folding (Boltz, AlphaFold3, Chai-1, etc.) — from structure prediction to downstream preparation.
-
-## Colabfold MSA
+# Colabfold MSA
 使用 ColabFold API (api.colabfold.com) 生成 MSA 的 .a3m 文件，方法：
 ```bash
 python colabfold_msa.py -h
 ```
-### 1. 生成 MSA
+## 1. 生成 MSA
 
 使用 `colabfold_msa.py` 脚本从 FASTA 文件生成 MSA：
 
@@ -45,7 +42,7 @@ python colabfold_msa.py -f x2.fasta -o x2.a3m
 
 ---
 
-### 2. 重要：A3M 文件后处理
+## 2. 重要：A3M 文件后处理
 
 ⚠️ **重要警告**：生成的 `x2.a3m` 文件包含 Windows 换行符（`\r\n`）和可能的空字符（`\x00`），必须清理后才能用于后续结构预测！
 
