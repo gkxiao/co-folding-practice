@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import os
 import json
 import csv
 import argparse
@@ -8,15 +7,19 @@ from pathlib import Path
 
 
 def parse_args():
-    """解析命令行参数"""
+    """Parse command line arguments"""
 
     parser = argparse.ArgumentParser(
         description="Extract Boltz affinity predictions and export CSV summary.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s -job HON-0003050R.yaml
-  %(prog)s -job HON-0003050R.yaml -o affinity.csv
+
+  boltz_affinity_to_csv.py -job HON-0003050R.yaml
+
+  boltz_affinity_to_csv.py \
+      -job HON-0003050R.yaml \
+      -o affinity_HON-0003050R.csv
 """
     )
 
@@ -31,32 +34,26 @@ Examples:
         "-o",
         "--output",
         default=None,
-        help="Output CSV file"
+        help="Output CSV file (default: affinity_<jobid>.csv)"
     )
 
     return parser.parse_args()
 
 
-def extract_job_id(yaml_file):
-    """从yaml文件名提取job id"""
-
-    return Path(yaml_file).stem
-
-
 def round_or_none(value, ndigits=2):
-    """保留小数位"""
+    """Round numeric values while preserving None."""
 
     if value is None:
         return None
 
-    return round(value, ndigits)
+    return round(float(value), ndigits)
 
 
 def main():
 
     args = parse_args()
 
-    job_id = extract_job_id(args.job)
+    job_id = Path(args.job).stem
 
     output_csv = (
         args.output
@@ -87,7 +84,7 @@ def main():
         )
         return 1
 
-    print(f"[INFO] Job ID: {job_id}")
+    print(f"[INFO] Job ID : {job_id}")
     print(f"[INFO] Reading: {affinity_file}")
 
     try:
@@ -103,40 +100,43 @@ def main():
             "affinity_probability_binary"
         )
 
-        predicted_ic50_uM = None
-        predicted_pic50 = None
+        pred_ic50_uM = None
+        pred_pic50 = None
+
+        #
+        # Boltz definition:
+        #
+        # affinity_pred_value
+        # = log10(IC50 [uM])
+        #
+        # IC50_uM = 10^y
+        # pIC50    = 6 - y
+        #
 
         if affinity_pred is not None:
 
-            #
-            # Boltz definition:
-            #
-            # affinity_pred_value
-            # = log10(IC50 [uM])
-            #
-
-            predicted_ic50_uM = round_or_none(
+            pred_ic50_uM = round_or_none(
                 10 ** affinity_pred
             )
 
-            predicted_pic50 = round_or_none(
+            pred_pic50 = round_or_none(
                 6.0 - affinity_pred
             )
 
         fields = [
             "JobName",
 
-            "Binder_Probability",
+            "Binder_prob",
 
-            "Predicted_log10IC50_uM",
-            "Predicted_IC50_uM",
-            "Predicted_pIC50",
+            "Pred_log10IC50_uM",
+            "Pred_IC50_uM",
+            "Pred_pIC50",
 
-            "affinity_pred_value1",
-            "affinity_probability_binary1",
+            "Pred_log10IC50_uM_Model1",
+            "Binder_prob_Model1",
 
-            "affinity_pred_value2",
-            "affinity_probability_binary2",
+            "Pred_log10IC50_uM_Model2",
+            "Binder_prob_Model2",
         ]
 
         row = {
@@ -144,51 +144,63 @@ def main():
             "JobName":
                 job_id,
 
-            "Binder_Probability":
-                round_or_none(binder_prob),
-
-            "Predicted_log10IC50_uM":
-                round_or_none(affinity_pred),
-
-            "Predicted_IC50_uM":
-                predicted_ic50_uM,
-
-            "Predicted_pIC50":
-                predicted_pic50,
-
-            "affinity_pred_value1":
+            "Binder_prob":
                 round_or_none(
-                    data.get("affinity_pred_value1")
+                    binder_prob
                 ),
 
-            "affinity_probability_binary1":
+            "Pred_log10IC50_uM":
+                round_or_none(
+                    affinity_pred
+                ),
+
+            "Pred_IC50_uM":
+                pred_ic50_uM,
+
+            "Pred_pIC50":
+                pred_pic50,
+
+            "Pred_log10IC50_uM_Model1":
+                round_or_none(
+                    data.get(
+                        "affinity_pred_value1"
+                    )
+                ),
+
+            "Binder_prob_Model1":
                 round_or_none(
                     data.get(
                         "affinity_probability_binary1"
                     )
                 ),
 
-            "affinity_pred_value2":
+            "Pred_log10IC50_uM_Model2":
                 round_or_none(
-                    data.get("affinity_pred_value2")
+                    data.get(
+                        "affinity_pred_value2"
+                    )
                 ),
 
-            "affinity_probability_binary2":
+            "Binder_prob_Model2":
                 round_or_none(
                     data.get(
                         "affinity_probability_binary2"
                     )
-                )
+                ),
         }
 
     except json.JSONDecodeError as e:
 
-        print(f"[ERROR] JSON parse error: {e}")
+        print(
+            f"[ERROR] JSON parse error:\n{e}"
+        )
         return 1
 
     except Exception as e:
 
-        print(f"[ERROR] Failed to process file: {e}")
+        print(
+            f"[ERROR] Failed to process file:\n{e}"
+        )
         return 1
 
     with open(
@@ -212,28 +224,29 @@ def main():
     print("Boltz Affinity Prediction Summary")
     print("=" * 60)
 
-    print(f"Job Name:                {job_id}")
+    print(f"Job Name:       {job_id}")
 
-    if binder_prob is not None:
+    if row["Binder_prob"] is not None:
         print(
-            f"Binder Probability:      "
-            f"{row['Binder_Probability']:.2f}"
+            f"Binder Prob:    "
+            f"{row['Binder_prob']:.2f}"
         )
 
-    if affinity_pred is not None:
-        print(
-            f"Predicted log10(IC50):   "
-            f"{row['Predicted_log10IC50_uM']:.2f}"
-        )
+    if row["Pred_log10IC50_uM"] is not None:
 
         print(
-            f"Predicted IC50 (uM):     "
-            f"{row['Predicted_IC50_uM']:.2f}"
+            f"log10(IC50):    "
+            f"{row['Pred_log10IC50_uM']:.2f}"
         )
 
         print(
-            f"Predicted pIC50:         "
-            f"{row['Predicted_pIC50']:.2f}"
+            f"IC50 (uM):      "
+            f"{row['Pred_IC50_uM']:.2f}"
+        )
+
+        print(
+            f"pIC50:          "
+            f"{row['Pred_pIC50']:.2f}"
         )
 
     print("=" * 60)
@@ -242,4 +255,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    raise SystemExit(main())
