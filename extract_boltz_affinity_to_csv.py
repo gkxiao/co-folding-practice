@@ -11,13 +11,12 @@ def parse_args():
     """解析命令行参数"""
 
     parser = argparse.ArgumentParser(
-        description="从Boltz预测结果中提取Affinity指标并汇总为CSV文件",
+        description="Extract Boltz affinity predictions and export CSV summary.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
-  %(prog)s -job HON-0003050R.yaml -o affinity_HON-0003050R.csv
-  %(prog)s -job my_protein.yaml
-  %(prog)s -job path/to/job.yaml -o results/affinity_summary.csv
+Examples:
+  %(prog)s -job HON-0003050R.yaml
+  %(prog)s -job HON-0003050R.yaml -o affinity.csv
 """
     )
 
@@ -25,28 +24,27 @@ def parse_args():
         "-job",
         "--job",
         required=True,
-        help="Boltz作业文件 (例如: HON-0003050R.yaml)"
+        help="Boltz job YAML file"
     )
 
     parser.add_argument(
         "-o",
         "--output",
         default=None,
-        help="输出CSV文件名 (默认: affinity_<job_id>.csv)"
+        help="Output CSV file"
     )
 
     return parser.parse_args()
 
 
-def extract_job_id(yaml_file: str) -> str:
-    """从YAML文件名提取Job ID"""
+def extract_job_id(yaml_file):
+    """从yaml文件名提取job id"""
 
-    basename = os.path.basename(yaml_file)
-    return basename.replace(".yaml", "")
+    return Path(yaml_file).stem
 
 
 def round_or_none(value, ndigits=2):
-    """保留指定小数位"""
+    """保留小数位"""
 
     if value is None:
         return None
@@ -66,93 +64,97 @@ def main():
         else f"affinity_{job_id}.csv"
     )
 
-    fields = [
-        "JobName",
-        "affinity_probability_binary",
-        "affinity_pred_value",
-        "Predicted_IC50_uM",
-        "Predicted_pIC50",
-        "Predicted_dG_kcal_mol",
-        "affinity_pred_value1",
-        "affinity_probability_binary1",
-        "affinity_pred_value2",
-        "affinity_probability_binary2",
-    ]
-
     pred_dir = Path(
         f"boltz_results_{job_id}/predictions/{job_id}"
     )
 
     if not pred_dir.exists():
-        print(f"[ERROR] 预测结果目录不存在: {pred_dir}")
+        print(
+            f"[ERROR] Prediction directory not found:\n"
+            f"        {pred_dir}"
+        )
         return 1
-
-    print(f"[INFO] Job ID: {job_id}")
-    print(f"[INFO] 读取目录: {pred_dir}")
 
     affinity_file = pred_dir / f"affinity_{job_id}.json"
 
     if not affinity_file.exists():
-        print(f"[ERROR] 亲和力文件不存在: {affinity_file}")
-        print("[INFO] 可能该作业未启用亲和力预测")
+        print(
+            f"[ERROR] Affinity file not found:\n"
+            f"        {affinity_file}"
+        )
+        print(
+            "[INFO] Affinity prediction may not have been enabled."
+        )
         return 1
 
-    print(f"[INFO] 读取文件: {affinity_file}")
+    print(f"[INFO] Job ID: {job_id}")
+    print(f"[INFO] Reading: {affinity_file}")
 
     try:
 
         with open(affinity_file, "r") as fp:
             data = json.load(fp)
 
-        affinity_pred_value = data.get(
+        affinity_pred = data.get(
             "affinity_pred_value"
+        )
+
+        binder_prob = data.get(
+            "affinity_probability_binary"
         )
 
         predicted_ic50_uM = None
         predicted_pic50 = None
-        predicted_dg = None
 
-        if affinity_pred_value is not None:
+        if affinity_pred is not None:
 
             #
-            # Boltz定义：
-            # affinity_pred_value = log10(IC50 [uM])
+            # Boltz definition:
+            #
+            # affinity_pred_value
+            # = log10(IC50 [uM])
             #
 
             predicted_ic50_uM = round_or_none(
-                10 ** affinity_pred_value
+                10 ** affinity_pred
             )
 
             predicted_pic50 = round_or_none(
-                6.0 - affinity_pred_value
+                6.0 - affinity_pred
             )
 
-            predicted_dg = round_or_none(
-                (6.0 - affinity_pred_value) * 1.364
-            )
+        fields = [
+            "JobName",
+
+            "Binder_Probability",
+
+            "Predicted_log10IC50_uM",
+            "Predicted_IC50_uM",
+            "Predicted_pIC50",
+
+            "affinity_pred_value1",
+            "affinity_probability_binary1",
+
+            "affinity_pred_value2",
+            "affinity_probability_binary2",
+        ]
 
         row = {
+
             "JobName":
                 job_id,
 
-            "affinity_probability_binary":
-                round_or_none(
-                    data.get("affinity_probability_binary")
-                ),
+            "Binder_Probability":
+                round_or_none(binder_prob),
 
-            "affinity_pred_value":
-                round_or_none(
-                    data.get("affinity_pred_value")
-                ),
+            "Predicted_log10IC50_uM":
+                round_or_none(affinity_pred),
 
             "Predicted_IC50_uM":
                 predicted_ic50_uM,
 
             "Predicted_pIC50":
                 predicted_pic50,
-
-            "Predicted_dG_kcal_mol":
-                predicted_dg,
 
             "affinity_pred_value1":
                 round_or_none(
@@ -161,7 +163,9 @@ def main():
 
             "affinity_probability_binary1":
                 round_or_none(
-                    data.get("affinity_probability_binary1")
+                    data.get(
+                        "affinity_probability_binary1"
+                    )
                 ),
 
             "affinity_pred_value2":
@@ -171,20 +175,20 @@ def main():
 
             "affinity_probability_binary2":
                 round_or_none(
-                    data.get("affinity_probability_binary2")
-                ),
+                    data.get(
+                        "affinity_probability_binary2"
+                    )
+                )
         }
 
-        print(
-            f"[OK] 已处理: {affinity_file.name}"
-        )
-
     except json.JSONDecodeError as e:
-        print(f"[ERROR] JSON解析失败: {e}")
+
+        print(f"[ERROR] JSON parse error: {e}")
         return 1
 
     except Exception as e:
-        print(f"[ERROR] 处理失败: {e}")
+
+        print(f"[ERROR] Failed to process file: {e}")
         return 1
 
     with open(
@@ -201,43 +205,35 @@ def main():
         writer.writeheader()
         writer.writerow(row)
 
-    print(f"[DONE] 已写入到 {output_csv}")
+    print(f"[DONE] Wrote CSV: {output_csv}")
 
     print()
     print("=" * 60)
-    print("Affinity Prediction Summary")
+    print("Boltz Affinity Prediction Summary")
     print("=" * 60)
 
-    print(f"Job Name:             {job_id}")
+    print(f"Job Name:                {job_id}")
 
-    if row["affinity_pred_value"] is not None:
+    if binder_prob is not None:
         print(
-            f"Affinity Pred Value:  "
-            f"{row['affinity_pred_value']:.2f}"
+            f"Binder Probability:      "
+            f"{row['Binder_Probability']:.2f}"
         )
 
-    if row["Predicted_IC50_uM"] is not None:
+    if affinity_pred is not None:
         print(
-            f"Predicted IC50 (uM):  "
+            f"Predicted log10(IC50):   "
+            f"{row['Predicted_log10IC50_uM']:.2f}"
+        )
+
+        print(
+            f"Predicted IC50 (uM):     "
             f"{row['Predicted_IC50_uM']:.2f}"
         )
 
-    if row["Predicted_pIC50"] is not None:
         print(
-            f"Predicted pIC50:      "
+            f"Predicted pIC50:         "
             f"{row['Predicted_pIC50']:.2f}"
-        )
-
-    if row["Predicted_dG_kcal_mol"] is not None:
-        print(
-            f"Predicted dG:         "
-            f"{row['Predicted_dG_kcal_mol']:.2f} kcal/mol"
-        )
-
-    if row["affinity_probability_binary"] is not None:
-        print(
-            f"Binder Probability:   "
-            f"{row['affinity_probability_binary']:.2f}"
         )
 
     print("=" * 60)
