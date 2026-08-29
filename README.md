@@ -165,7 +165,20 @@ boltz_results_8_affinity/predictions/8_affinity
 
 ---
 
-## 5. 使用注意
+## 5. 后处理
+
+用Schrodinger的蛋白准备工作流（prepwizard）对Boltz预测结果文件进行准备，输出包含boltz置信度打分的MAEGZ文件，并叠合到参比蛋白结构上以便可视化分析。
+```bash
+# 结构准备
+sch_boltz_prepwizard.py -i 8_affinity.yaml -ref 4zlz.maegz
+
+# 合并模型
+$SCHRODINGER/utilities/structcat -imae boltz_results_8_affinity/predictions/8_affinity/model_[0-9].maegz -omae 8_model.maegz 
+```
+
+---
+
+## 6. 使用注意
 
 1. **只看相对排序，不读绝对亲和力**：`affinity_pred_value` 是"IC50 类似量纲"的 assay 依赖值，最适合在**同一靶标同系物系列内**比较修改带来的亲和力变化（其 FEP 子集基准 Pearson R≈0.66），跨 assay / 跨靶标比绝对值不可靠。
 2. 结合概率（0.28）与数值（2 μM）结论一致，这里没有冲突。
@@ -174,7 +187,7 @@ boltz_results_8_affinity/predictions/8_affinity
 
 ---
 
-## 6. 参考链接
+## 7. 参考链接
 
 - Boltz GitHub：https://github.com/jwohlwend/boltz
 - Boltz 官方文档与输出格式说明：https://github.com/jwohlwend/boltz#output
