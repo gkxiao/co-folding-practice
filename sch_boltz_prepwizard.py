@@ -783,6 +783,9 @@ def make_output_filename(
     to:
 
         EP262_K28_model_0.maegz
+
+    Output MAEGZ is written into the same
+    directory as the CIF file.
     """
 
     model_number = (
@@ -799,7 +802,7 @@ def make_output_filename(
         )
 
     return (
-        Path.cwd()
+        Path(cif_file).parent
         / (
             f"{output_prefix}"
             f"_model_{model_number}.maegz"
@@ -931,6 +934,7 @@ def run_prepwizard(
     reference,
     host,
     samplewater,
+    launch_dir,
 ):
     """
     Launch one PrepWizard job and WAIT for completion.
@@ -975,6 +979,10 @@ def run_prepwizard(
         f"Host: {host}"
     )
 
+    print(
+    f"Launch dir: {launch_dir}"
+    )
+
     print()
     print(
         "Command:"
@@ -993,7 +1001,7 @@ def run_prepwizard(
         cmd,
         print_output=True,
         launch_dir=str(
-            Path.cwd()
+            launch_dir
         ),
         show_failure_dialog=False,
     )
@@ -1261,6 +1269,7 @@ def main():
                 samplewater=(
                     not args.no_samplewater
                 ),
+                launch_dir=cif_file.parent,
             )
 
             # ------------------------------------------------------
