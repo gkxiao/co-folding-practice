@@ -1,0 +1,1267 @@
+#!/usr/bin/evn python
+# -*- coding: utf-8 -*-
+"""
+sch_boltz_prepwizard.py
+Prepare Boltz co-folding results using Schrödinger PrepWizard.
+Example
+-------
+$SCHRODINGER/run sch_boltz_prepwizard.py \
+    -i EP262_K28.yaml \
+    -ref 7S8L.maegz \
+    -renumber_shift 27
+Workflow
+--------
+Boltz CIF
+    |
+    v
+PrepWizard
+    |
+    v
+MAEGZ
+    |
+    +--> title = model_i
+    |
+    +--> optional residue renumbering
+    |
+    +--> Boltz confidence properties
+    |
+    v
+final MAEGZ
+    |
+    +--> structcat merge (all models)
+    |
+    v
+single multi-model MAEGZ
+Renumbering
+-----------
+-renumber_shift 27
+Protein residue numbers are changed AFTER PrepWizard:
+    1  -> 28
+    2  -> 29
+    3  -> 30
+    ...
+    27 -> 54
+Only standard protein amino-acid residues are renumbered.
+Water, ions, ligands and other non-protein residues
+are not changed.
+Serial PrepWizard
+-----------------
+Only one PrepWizard job is submitted at a time:
+    model_0 -> wait -> model_1 -> wait -> model_2 -> ...
+This is intentional to reduce simultaneous Schrödinger
+license-token consumption.
+Merging
+-------
+After every model is prepared, all per-model MAEGZ files
+are merged into one multi-model MAEGZ with structcat:
+    $SCHRODINGER/utilities/structcat \
+        -imae <output_prefix>_model_0.maegz ... \
+        -omae <output_prefix>_model.maegz
+Merging is only performed when ALL models succeeded.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from schrodinger import structure
+from schrodinger.job import jobcontrol
+# ============================================================================
+# Defaults
+# ============================================================================
+DEFAULT_HOST = "localhost:4"
+# ============================================================================
+# Standard protein amino acids
+# ============================================================================
+STANDARD_PROTEIN_RESIDUES = {
+    "ALA",
+    "ARG",
+    "ASN",
+    "ASP",
+    "CYS",
+    "GLN",
+    "GLU",
+    "GLY",
+    "HIS",
+    "ILE",
+    "LEU",
+    "LYS",
+    "MET",
+    "PHE",
+    "PRO",
+    "SER",
+    "THR",
+    "TRP",
+    "TYR",
+    "VAL",
+}
+# ============================================================================
+# Command line
+# ============================================================================
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Prepare Boltz co-folding CIF results "
+            "with Schrödinger PrepWizard."
+        )
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        help="Boltz input YAML file, e.g. EP262_K28.yaml",
+    )
+    parser.add_argument(
+        "-ref",
+        "--reference",
+        default=None,
+        help=(
+            "Optional reference structure. "
+            "Passed to -reference_st_file."
+        ),
+    )
+    parser.add_argument(
+        "-oprefix",
+        "--oprefix",
+        dest="output_prefix",
+        default=None,
+        help=(
+            "Output filename prefix. "
+            "Default: input YAML stem."
+        ),
+    )
+    parser.add_argument(
+        "-renumber_shift",
+        "--renumber_shift",
+        type=int,
+        default=0,
+        help=(
+            "Residue-number offset applied AFTER PrepWizard. "
+            "Example: -renumber_shift 27 "
+            "changes residue 1 to 28."
+        ),
+    )
+    parser.add_argument(
+        "-HOST",
+        "--host",
+        default=DEFAULT_HOST,
+        help=(
+            "PrepWizard JobControl host. "
+            "Default: localhost:4"
+        ),
+    )
+    parser.add_argument(
+        "--no-samplewater",
+        action="store_true",
+        help="Do not use PrepWizard -samplewater.",
+    )
+    return parser.parse_args()
+# ============================================================================
+# Basic utilities
+# ============================================================================
+def get_input_stem(input_yaml):
+    """
+    incyte.yaml -> incyte
+    """
+    return Path(input_yaml).stem
+def find_prediction_directory(input_yaml):
+    """
+    Locate:
+        boltz_results_${input}/predictions/${input}
+    """
+    input_stem = get_input_stem(input_yaml)
+    result_dir = (
+        Path.cwd()
+        / f"boltz_results_{input_stem}"
+    )
+    prediction_dir = (
+        result_dir
+        / "predictions"
+        / input_stem
+    )
+    if not result_dir.is_dir():
+        raise FileNotFoundError(
+            "Boltz result directory not found:\n"
+            f"    {result_dir}"
+        )
+    if not prediction_dir.is_dir():
+        raise FileNotFoundError(
+            "Boltz prediction directory not found:\n"
+            f"    {prediction_dir}"
+        )
+    return prediction_dir
+def extract_model_number(filename):
+    """
+    Extract model number from:
+        EP262_K28_model_0.cif
+        EP262_K28_model_1.cif
+        EP262_K28_model_10.cif
+    """
+    basename = Path(filename).name
+    match = re.search(
+        r"_model_(\d+)\.cif$",
+        basename,
+    )
+    if match is None:
+        return None
+    return int(match.group(1))
+def find_cif_files(prediction_dir):
+    """
+    Find all *_model_*.cif files and sort numerically.
+    """
+    files = []
+    for cif_file in prediction_dir.glob(
+        "*_model_*.cif"
+    ):
+        model_number = extract_model_number(
+            cif_file
+        )
+        if model_number is not None:
+            files.append(
+                (
+                    model_number,
+                    cif_file,
+                )
+            )
+    files.sort(
+        key=lambda x: x[0]
+    )
+    return [
+        cif_file
+        for model_number, cif_file
+        in files
+    ]
+def check_file_exists(filename, description):
+    """
+    Validate an input file.
+    """
+    path = (
+        Path(filename)
+        .expanduser()
+        .resolve()
+    )
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{description} not found:\n"
+            f"    {path}"
+        )
+    return path
+# ============================================================================
+# Confidence JSON
+# ============================================================================
+def find_confidence_json(cif_file):
+    """
+    For:
+        EP262_K28_model_0.cif
+    find:
+        confidence_EP262_K28_model_0.json
+    """
+    cif_file = Path(cif_file)
+    json_name = (
+        "confidence_"
+        + cif_file.stem
+        + ".json"
+    )
+    json_file = (
+        cif_file.parent
+        / json_name
+    )
+    if not json_file.is_file():
+        raise FileNotFoundError(
+            "Confidence JSON not found for:\n"
+            f"    {cif_file.name}\n"
+            "Expected:\n"
+            f"    {json_file.name}"
+        )
+    return json_file
+def read_confidence_json(json_file):
+    """
+    Read and validate Boltz confidence JSON.
+    """
+    with open(
+        json_file,
+        "r",
+        encoding="utf-8",
+    ) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(
+            "Confidence JSON must contain "
+            "a JSON object:\n"
+            f"    {json_file}"
+        )
+    return data
+# ============================================================================
+# Structure property handling
+# ============================================================================
+def make_user_property_name(
+    value,
+    key,
+):
+    """
+    Convert JSON key/value into a Maestro user-property name.
+    float:
+        confidence_score
+        ->
+        r_user_confidence_score
+    int:
+        some_integer
+        ->
+        i_user_some_integer
+    bool:
+        some_flag
+        ->
+        b_user_some_flag
+    string:
+        some_text
+        ->
+        s_user_some_text
+    dict/list:
+        chains_ptm
+        ->
+        s_user_chains_ptm
+    """
+    if isinstance(value, bool):
+        property_type = "b"
+    elif isinstance(value, int):
+        property_type = "i"
+    elif isinstance(value, float):
+        property_type = "r"
+    elif isinstance(value, str):
+        property_type = "s"
+    elif isinstance(
+        value,
+        (dict, list, tuple),
+    ):
+        property_type = "s"
+    else:
+        raise TypeError(
+            f"Unsupported JSON value type "
+            f"for '{key}': "
+            f"{type(value).__name__}"
+        )
+    safe_key = re.sub(
+        r"[^A-Za-z0-9_]+",
+        "_",
+        str(key),
+    )
+    return (
+        f"{property_type}_user_{safe_key}"
+    )
+def convert_property_value(value):
+    """
+    Convert JSON value into a Maestro-compatible
+    Structure property value.
+    Nested objects/lists are stored as compact JSON strings.
+    """
+    if isinstance(
+        value,
+        (dict, list, tuple),
+    ):
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    return value
+def add_confidence_properties(
+    st,
+    confidence_data,
+):
+    """
+    Write every top-level Boltz confidence JSON item
+    as a Structure-level user property.
+    """
+    for key, value in confidence_data.items():
+        property_name = (
+            make_user_property_name(
+                value,
+                key,
+            )
+        )
+        property_value = (
+            convert_property_value(
+                value
+            )
+        )
+        st.property[
+            property_name
+        ] = property_value
+        print(
+            "    Property: "
+            f"{property_name} = "
+            f"{property_value}"
+        )
+# ============================================================================
+# Structure handling
+# ============================================================================
+def read_single_structure(maegz_file):
+    """
+    Read exactly one Structure from a MAEGZ file.
+    One Boltz CIF corresponds to one complex.
+    """
+    with structure.StructureReader(
+        str(maegz_file)
+    ) as reader:
+        structures = list(reader)
+    if len(structures) != 1:
+        raise RuntimeError(
+            "Expected exactly one Structure in:\n"
+            f"    {maegz_file}\n"
+            f"Found: {len(structures)}"
+        )
+    return structures[0]
+def is_standard_protein_residue(residue):
+    """
+    Determine whether a Schrödinger structure residue
+    is a standard protein amino acid.
+    Schrödinger 2024-3 _Residue objects do NOT provide
+    an `is_protein` attribute.
+    Instead, use the PDB residue name:
+        residue.pdbres
+    and compare it with the standard amino-acid set.
+    """
+    try:
+        pdbres = residue.pdbres
+    except AttributeError:
+        return False
+    if pdbres is None:
+        return False
+    pdbres = str(
+        pdbres
+    ).strip().upper()
+    return (
+        pdbres
+        in STANDARD_PROTEIN_RESIDUES
+    )
+def renumber_protein_residues(
+    st,
+    shift,
+):
+    """
+    Add `shift` to standard protein residue numbers.
+    Example:
+        shift = 27
+        1  -> 28
+        2  -> 29
+        3  -> 30
+    Only standard protein amino acids are changed.
+    Returns
+    -------
+    changed : int
+        Number of protein residues modified.
+    """
+    if shift == 0:
+        return 0
+    changed = 0
+    first_change = None
+    last_change = None
+    for residue in st.residue:
+        if not is_standard_protein_residue(
+            residue
+        ):
+            continue
+        old_resnum = residue.resnum
+        new_resnum = (
+            old_resnum
+            + shift
+        )
+        residue.resnum = new_resnum
+        changed += 1
+        if first_change is None:
+            first_change = (
+                residue.pdbres,
+                old_resnum,
+                new_resnum,
+            )
+        last_change = (
+            residue.pdbres,
+            old_resnum,
+            new_resnum,
+        )
+    if changed > 0:
+        print(
+            "    First protein residue: "
+            f"{first_change[0]} "
+            f"{first_change[1]} -> "
+            f"{first_change[2]}"
+        )
+        print(
+            "    Last protein residue : "
+            f"{last_change[0]} "
+            f"{last_change[1]} -> "
+            f"{last_change[2]}"
+        )
+    return changed
+def finalize_structure(
+    maegz_file,
+    model_number,
+    confidence_data,
+    renumber_shift,
+):
+    """
+    Finalize a PrepWizard output:
+    1. Read the single complex Structure.
+    2. Set title to model_i.
+    3. Optionally renumber protein residues.
+    4. Add all Boltz confidence JSON values.
+    5. Write the Structure back to the same MAEGZ.
+    """
+    maegz_file = Path(
+        maegz_file
+    )
+    st = read_single_structure(
+        maegz_file
+    )
+    # --------------------------------------------------------------
+    # Structure title
+    # --------------------------------------------------------------
+    title = (
+        f"model_{model_number}"
+    )
+    st.title = title
+    print(
+        f"    Structure title: {title}"
+    )
+    # --------------------------------------------------------------
+    # Optional residue renumbering
+    # --------------------------------------------------------------
+    if renumber_shift != 0:
+        changed = (
+            renumber_protein_residues(
+                st,
+                renumber_shift,
+            )
+        )
+        print(
+            f"    Renumber shift: "
+            f"{renumber_shift}"
+        )
+        print(
+            f"    Protein residues changed: "
+            f"{changed}"
+        )
+        if changed == 0:
+            raise RuntimeError(
+                "Renumber shift was requested, "
+                "but no standard protein residues "
+                "were found."
+            )
+    else:
+        print(
+            "    Renumber shift: 0 "
+            "(no renumbering)"
+        )
+    # --------------------------------------------------------------
+    # Boltz confidence properties
+    # --------------------------------------------------------------
+    print(
+        "    Adding Boltz confidence properties:"
+    )
+    add_confidence_properties(
+        st,
+        confidence_data,
+    )
+    # --------------------------------------------------------------
+    # Write Structure
+    #
+    # IMPORTANT:
+    #
+    # Do NOT use:
+    #
+    #     structure.write(...)
+    #
+    # Schrödinger Structure provides:
+    #
+    #     st.write(...)
+    # --------------------------------------------------------------
+    st.write(
+        str(maegz_file)
+    )
+    print(
+        f"    Finalized: {maegz_file}"
+    )
+# ============================================================================
+# Output filename
+# ============================================================================
+def make_output_filename(
+    cif_file,
+    output_prefix,
+):
+    """
+    Convert:
+        EP262_K28_model_0.cif
+    to:
+        EP262_K28_model_0.maegz
+    Output MAEGZ is written into the same
+    directory as the CIF file.
+    """
+    model_number = (
+        extract_model_number(
+            cif_file
+        )
+    )
+    if model_number is None:
+        raise RuntimeError(
+            "Cannot determine model number from:\n"
+            f"    {cif_file}"
+        )
+    return (
+        Path(cif_file).parent
+        / (
+            f"{output_prefix}"
+            f"_model_{model_number}.maegz"
+        )
+    )
+# ============================================================================
+# PrepWizard command
+# ============================================================================
+def build_prepwizard_command(
+    cif_file,
+    output_file,
+    reference,
+    host,
+    samplewater,
+):
+    """
+    Build PrepWizard command.
+    """
+    schrodinger = os.environ.get(
+        "SCHRODINGER"
+    )
+    if not schrodinger:
+        raise EnvironmentError(
+            "SCHRODINGER environment variable "
+            "is not set.\n"
+            "Run this script using:\n"
+            "    $SCHRODINGER/run "
+            "boltz_prepwizard.py ..."
+        )
+    prepwizard = (
+        Path(schrodinger)
+        / "utilities"
+        / "prepwizard"
+    )
+    if not prepwizard.is_file():
+        raise FileNotFoundError(
+            "PrepWizard executable not found:\n"
+            f"    {prepwizard}"
+        )
+    jobname = (
+        Path(output_file).stem
+    )
+    cmd = [
+        str(prepwizard),
+        str(cif_file),
+        str(output_file),
+        "-fillsidechains",
+        "-disulfides",
+        "-assign_all_residues",
+        "-rehtreat",
+        "-max_states",
+        "1",
+        "-epik_pH",
+        "7.4",
+        "-epik_pHt",
+        "2.0",
+        "-antibody_cdr_scheme",
+        "Kabat",
+    ]
+    # --------------------------------------------------------------
+    # Optional reference
+    # --------------------------------------------------------------
+    if reference is not None:
+        cmd.extend([
+            "-reference_st_file",
+            str(reference),
+        ])
+    # --------------------------------------------------------------
+    # Sample water
+    # --------------------------------------------------------------
+    if samplewater:
+        cmd.append(
+            "-samplewater"
+        )
+    cmd.extend([
+        "-propka_pH",
+        "7.4",
+        "-f",
+        "S-OPLS",
+        "-rmsd",
+        "0.3",
+        "-watdist",
+        "5.0",
+        "-JOBNAME",
+        jobname,
+        "-HOST",
+        host,
+    ])
+    return cmd
+# ============================================================================
+# Run PrepWizard
+# ============================================================================
+def run_prepwizard(
+    cif_file,
+    output_file,
+    reference,
+    host,
+    samplewater,
+    launch_dir,
+):
+    """
+    Launch one PrepWizard job and WAIT for completion.
+    The next model is not submitted until this job
+    has completed.
+    """
+    cmd = build_prepwizard_command(
+        cif_file=cif_file,
+        output_file=output_file,
+        reference=reference,
+        host=host,
+        samplewater=samplewater,
+    )
+    print()
+    print("=" * 78)
+    print(
+        f"PrepWizard: "
+        f"{Path(cif_file).name}"
+    )
+    print("=" * 78)
+    print(
+        f"Input : {cif_file}"
+    )
+    print(
+        f"Output: {output_file}"
+    )
+    if reference is not None:
+        print(
+            f"Reference: {reference}"
+        )
+    print(
+        f"Host: {host}"
+    )
+    print(
+    f"Launch dir: {launch_dir}"
+    )
+    print()
+    print(
+        "Command:"
+    )
+    print(
+        " ".join(cmd)
+    )
+    print()
+    print(
+        "Launching PrepWizard ..."
+    )
+    job = jobcontrol.launch_job(
+        cmd,
+        print_output=True,
+        launch_dir=str(
+            launch_dir
+        ),
+        show_failure_dialog=False,
+    )
+    print(
+        f"JobId: {job.JobId}"
+    )
+    print()
+    print(
+        "Waiting for completion "
+        "(serial license-token control) ..."
+    )
+    # --------------------------------------------------------------
+    # Critical:
+    #
+    # Wait until PrepWizard finishes before
+    # starting another model.
+    # --------------------------------------------------------------
+    job.wait(
+        throw_on_failure=True
+    )
+    print(
+        "PrepWizard completed successfully."
+    )
+    if not Path(
+        output_file
+    ).is_file():
+        raise RuntimeError(
+            "PrepWizard reported success, "
+            "but output MAEGZ was not found:\n"
+            f"    {output_file}"
+        )
+    return job
+# ============================================================================
+# Merge MAEGZ files
+# ============================================================================
+def build_structcat_command(
+    output_files,
+    merged_file,
+):
+    """
+    Build structcat command:
+        $SCHRODINGER/utilities/structcat \
+            -imae model_0.maegz model_1.maegz ... \
+            -omae output_model.maegz
+    All per-model MAEGZ paths are passed explicitly
+    (equivalent to `ls ${prefix}_model_*.maegz`).
+    """
+    schrodinger = os.environ.get(
+        "SCHRODINGER"
+    )
+    if not schrodinger:
+        raise EnvironmentError(
+            "SCHRODINGER environment variable "
+            "is not set.\n"
+            "Run this script using:\n"
+            "    $SCHRODINGER/run "
+            "boltz_prepwizard.py ..."
+        )
+    structcat = (
+        Path(schrodinger)
+        / "utilities"
+        / "structcat"
+    )
+    if not structcat.is_file():
+        raise FileNotFoundError(
+            "structcat executable not found:\n"
+            f"    {structcat}"
+        )
+    cmd = [
+        str(structcat),
+        "-imae",
+    ]
+    cmd.extend(
+        str(output_file)
+        for output_file
+        in output_files
+    )
+    cmd.extend([
+        "-omae",
+        str(merged_file),
+    ])
+    return cmd
+def merge_model_maegz_files(
+    output_files,
+    merged_file,
+    launch_dir,
+):
+    """
+    Merge all per-model MAEGZ files into a single
+    multi-model MAEGZ using structcat.
+    Runs only after EVERY model has been prepared.
+    structcat is a fast command-line utility, so it is
+    run synchronously with subprocess (no JobControl).
+    """
+    # --------------------------------------------------------------
+    # Sanity check: every per-model MAEGZ must exist
+    # --------------------------------------------------------------
+    missing = [
+        str(path)
+        for path in output_files
+        if not Path(path).is_file()
+    ]
+    if missing:
+        missing_text = (
+            "\n    ".join(missing)
+        )
+        raise RuntimeError(
+            "Cannot merge: output MAEGZ files "
+            "are missing:\n"
+            f"    {missing_text}"
+        )
+    cmd = build_structcat_command(
+        output_files,
+        merged_file,
+    )
+    print()
+    print("=" * 78)
+    print("Merging models with structcat")
+    print("=" * 78)
+    print(
+        f"Output: {merged_file}"
+    )
+    print()
+    print(
+        "Command:"
+    )
+    print(
+        " ".join(cmd)
+    )
+    print()
+    print(
+        "Running structcat ..."
+    )
+    result = subprocess.run(
+        cmd,
+        cwd=str(launch_dir),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "structcat failed with "
+            f"returncode {result.returncode}.\n"
+            f"    Merged file not created: "
+            f"{merged_file}"
+        )
+    if not Path(
+        merged_file
+    ).is_file():
+        raise RuntimeError(
+            "structcat reported success, "
+            "but merged MAEGZ was not found:\n"
+            f"    {merged_file}"
+        )
+    print(
+        "structcat completed successfully."
+    )
+    print(
+        f"Merged: {merged_file}"
+    )
+    return Path(merged_file)
+# ============================================================================
+# Main
+# ============================================================================
+def main():
+    args = parse_args()
+    # --------------------------------------------------------------
+    # Input YAML
+    # --------------------------------------------------------------
+    input_yaml = (
+        check_file_exists(
+            args.input,
+            "Boltz input YAML",
+        )
+    )
+    input_stem = (
+        get_input_stem(
+            input_yaml
+        )
+    )
+    # --------------------------------------------------------------
+    # Output prefix
+    # --------------------------------------------------------------
+    if args.output_prefix is None:
+        output_prefix = input_stem
+    else:
+        output_prefix = (
+            args.output_prefix
+        )
+    # --------------------------------------------------------------
+    # Reference
+    # --------------------------------------------------------------
+    reference = None
+    if args.reference is not None:
+        reference = (
+            check_file_exists(
+                args.reference,
+                "Reference structure",
+            )
+        )
+    # --------------------------------------------------------------
+    # Boltz prediction directory
+    # --------------------------------------------------------------
+    prediction_dir = (
+        find_prediction_directory(
+            input_yaml
+        )
+    )
+    # --------------------------------------------------------------
+    # Find CIF files
+    # --------------------------------------------------------------
+    cif_files = (
+        find_cif_files(
+            prediction_dir
+        )
+    )
+    if not cif_files:
+        raise RuntimeError(
+            "No Boltz model CIF files found in:\n"
+            f"    {prediction_dir}"
+        )
+    # --------------------------------------------------------------
+    # Header
+    # --------------------------------------------------------------
+    print()
+    print("#" * 78)
+    print(
+        "# boltz_prepwizard.py"
+    )
+    print("#" * 78)
+    print(
+        f"Input YAML       : {input_yaml}"
+    )
+    print(
+        f"Input stem       : {input_stem}"
+    )
+    print(
+        f"Prediction dir   : {prediction_dir}"
+    )
+    print(
+        f"Output prefix    : {output_prefix}"
+    )
+    print(
+        "Reference        : "
+        f"{reference if reference else 'None'}"
+    )
+    print(
+        "Renumber shift   : "
+        f"{args.renumber_shift}"
+    )
+    print(
+        f"PrepWizard host  : {args.host}"
+    )
+    print(
+        "Sample water     : "
+        f"{not args.no_samplewater}"
+    )
+    print(
+        f"Models found     : {len(cif_files)}"
+    )
+    print()
+    print(
+        "Models:"
+    )
+    for cif_file in cif_files:
+        model_number = (
+            extract_model_number(
+                cif_file
+            )
+        )
+        confidence_file = (
+            find_confidence_json(
+                cif_file
+            )
+        )
+        print(
+            f"model_{model_number}: "
+            f"{cif_file.name}"
+        )
+        print(
+            "confidence: "
+            f"{confidence_file.name}"
+        )
+    print("#" * 78)
+    # --------------------------------------------------------------
+    # Serial processing
+    # --------------------------------------------------------------
+    successful = []
+    failed = []
+    for index, cif_file in enumerate(
+        cif_files,
+        start=1,
+    ):
+        model_number = (
+            extract_model_number(
+                cif_file
+            )
+        )
+        output_file = (
+            make_output_filename(
+                cif_file,
+                output_prefix,
+            )
+        )
+        print()
+        print()
+        print(
+            f"[{index}/{len(cif_files)}] "
+            f"Starting model_{model_number}"
+        )
+        try:
+            # ------------------------------------------------------
+            # Read confidence JSON
+            # ------------------------------------------------------
+            confidence_file = (
+                find_confidence_json(
+                    cif_file
+                )
+            )
+            confidence_data = (
+                read_confidence_json(
+                    confidence_file
+                )
+            )
+            # ------------------------------------------------------
+            # PrepWizard
+            # ------------------------------------------------------
+            run_prepwizard(
+                cif_file=cif_file,
+                output_file=output_file,
+                reference=reference,
+                host=args.host,
+                samplewater=(
+                    not args.no_samplewater
+                ),
+                launch_dir=cif_file.parent,
+            )
+            # ------------------------------------------------------
+            # Post-processing
+            # ------------------------------------------------------
+            print()
+            print(
+                f"Post-processing "
+                f"model_{model_number} ..."
+            )
+            finalize_structure(
+                maegz_file=output_file,
+                model_number=model_number,
+                confidence_data=confidence_data,
+                renumber_shift=(
+                    args.renumber_shift
+                ),
+            )
+            successful.append(
+                (
+                    model_number,
+                    output_file,
+                )
+            )
+            print()
+            print(
+                f"model_{model_number} "
+                "completed successfully."
+            )
+        except Exception as exc:
+            failed.append(
+                (
+                    model_number,
+                    cif_file,
+                    str(exc),
+                )
+            )
+            print()
+            print("#" * 78)
+            print(
+                f"ERROR processing "
+                f"model_{model_number}"
+            )
+            print("#" * 78)
+            print(
+                f"CIF   : {cif_file}"
+            )
+            print(
+                f"Error : {exc}"
+            )
+            print()
+            print(
+                "Workflow stopped because "
+                "this model failed."
+            )
+            break
+    # --------------------------------------------------------------
+    # Merge all per-model MAEGZ files
+    #
+    # Merging is performed ONLY when every model
+    # succeeded (no failures).
+    # --------------------------------------------------------------
+    merged_file = None
+    if successful and not failed:
+        print()
+        print()
+        print("#" * 78)
+        print(
+            "# MERGING MODELS"
+        )
+        print("#" * 78)
+        output_files = [
+            make_output_filename(
+                cif_file,
+                output_prefix,
+            )
+            for cif_file in cif_files
+        ]
+        merged_file = (
+            merge_model_maegz_files(
+                output_files=output_files,
+                merged_file=(
+                    prediction_dir
+                    / (
+                        f"{output_prefix}"
+                        "_model.maegz"
+                    )
+                ),
+                launch_dir=prediction_dir,
+            )
+        )
+    # --------------------------------------------------------------
+    # Final summary
+    # --------------------------------------------------------------
+    print()
+    print()
+    print("#" * 78)
+    print(
+        "# FINAL SUMMARY"
+    )
+    print("#" * 78)
+    print(
+        f"Total models : {len(cif_files)}"
+    )
+    print(
+        f"Successful   : {len(successful)}"
+    )
+    print(
+        f"Failed       : {len(failed)}"
+    )
+    if successful:
+        print()
+        print(
+            "Successful outputs:"
+        )
+        for (
+            model_number,
+            output_file,
+        ) in successful:
+            print(
+                f"    model_{model_number}: "
+                f"{output_file.name}"
+            )
+    if merged_file is not None:
+        print()
+        print(
+            "Merged output:"
+        )
+        print(
+            f"    {merged_file.name}"
+        )
+    if failed:
+        print()
+        print(
+            "Failed models:"
+        )
+        for (
+            model_number,
+            cif_file,
+            error,
+        ) in failed:
+            print(
+                f"    model_{model_number}: "
+                f"{cif_file.name}"
+            )
+            print(
+                f"        {error}"
+            )
+        print()
+        print(
+            "Merging skipped because "
+            "some models failed."
+        )
+        print()
+        print(
+            "Workflow finished with errors."
+        )
+        sys.exit(1)
+    print()
+    print(
+        "All Boltz models were "
+        "prepared successfully."
+    )
+    if merged_file is not None:
+        print(
+            "All models merged into: "
+            f"{merged_file.name}"
+        )
+    print("#" * 78)
+if __name__ == "__main__":
+    main()
