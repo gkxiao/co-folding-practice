@@ -188,6 +188,8 @@ sch_boltz_prepwizard.py -i 8_affinity.yaml -ref 4zlz.maegz
 $SCHRODINGER/utilities/structcat -imae boltz_results_8_affinity/predictions/8_affinity/model_[0-9].maegz -omae 8_model.maegz 
 ```
 
+更详细的后处理说明，请参见文档`sch_boltz_prepwizard.md`。
+
 ---
 
 ## 6. 使用注意
