@@ -67,7 +67,7 @@ boltz predict 8_affinity.yaml \
 | `--step_scale 1.5` | 扩散步长缩放因子 |
 
 
-常用的参数已经封装在脚本`rub_boltz.sh`里:
+上述常用的参数已经封装在脚本`rub_boltz.sh`里:
 ```bash
 # 使用 MSA 服务器
 ./predict.sh -m config.yaml
