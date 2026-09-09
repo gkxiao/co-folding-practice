@@ -66,6 +66,18 @@ boltz predict 8_affinity.yaml \
 | `--sampling_steps 1500` | 每个样本的扩散去噪步数 |
 | `--step_scale 1.5` | 扩散步长缩放因子 |
 
+
+常用的参数已经封装在脚本`rub_boltz.sh`里:
+```bash
+# 使用 MSA 服务器
+./predict.sh -m config.yaml
+
+# 不使用 MSA 服务器（YAML 自带 MSA）
+./predict.sh config.yaml
+
+# 查看帮助
+./predict.sh -h
+```
 ---
 
 ## 3. 实际输出文件结构
