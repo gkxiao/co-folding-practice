@@ -179,6 +179,8 @@ boltz_results_8_affinity/predictions/8_affinity
 
 ## 5. 后处理
 
+### 5.1 结构准备
+
 用Schrodinger的蛋白准备工作流（prepwizard）对Boltz预测结果文件进行准备，输出包含boltz置信度打分的MAEGZ文件，并叠合到参比蛋白结构上以便可视化分析。
 ```bash
 # 结构准备
@@ -189,6 +191,8 @@ $SCHRODINGER/utilities/structcat -imae boltz_results_8_affinity/predictions/8_af
 ```
 
 更详细的后处理说明，请参见文档`sch_boltz_prepwizard.md`。
+
+### 5.2 置信度打分
 
 将模型置信度打分json转为csv格式，并打印打分总结。
 
