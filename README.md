@@ -194,6 +194,35 @@ $SCHRODINGER/utilities/structcat -imae boltz_results_8_affinity/predictions/8_af
 
 ```bash
 python boltz_confidence_summary.py -i ${input}.yaml -o ${input}_boltz_confidence.csv
+
+OK: 5 models x 21 metrics -> 190-amyr3_confidence.csv
+
+=== Boltz 置信度总结 ===
+输入文件    : 190-amyr3.yaml
+结果目录    : /public/gkxiao/work/chipscreen/boltz2_model/boltz_results_190-amyr3/predictions/190-amyr3
+输出 CSV    : 190-amyr3_confidence.csv
+
+[1] 读取模型数 : 5 个 (model_0 ~ model_4)
+
+[2] 系统类型   : 蛋白-配体复合物 (protein-ligand complex)
+    链组成     : 3 条链，蛋白 2，配体 1
+    判定依据   : input yaml (sequences)
+
+[3] 关键指标概览（Boltz 官方规则：复合物看界面指标 iptm/ligand_iptm，pTM 仅对单体主导排序；* 为推荐候选）:
+model     confidence_score ptm      iptm     ligand_iptm  complex_plddt   备注
+model_0   0.805            0.827    0.838    0.982        0.797           综合最高 *
+model_1   0.800            0.815    0.818    0.924        0.796
+model_2   0.794            0.773    0.782    0.893        0.798
+model_3   0.787            0.774    0.795    0.982        0.785           蛋白-配体界面质量 (ligand_iptm) *
+model_4   0.787            0.820    0.825    0.957        0.777
+
+[4] 置信度解读与推荐
+    · 判定规则：复合物重点看界面指标 iptm/ligand_iptm（蛋白-配体复合物尤以 ligand_iptm 反映结合模式质量）。 pTM 反映全局折叠，pLDDT 反映局部置信度，pDE/ipDE（Å）越低越好。
+    · 关键指标分带（社区惯例阈值，非 Boltz 官方硬性截断）：蛋白-配体界面质量 (ligand_iptm) 0.893–0.982（高置信区间）
+      complex_plddt 0.777–0.798，处于高/非常高分带。
+    · 综合置信度最高 : model_0 (confidence_score 0.805)  <- Boltz 默认排序第 1
+    · 关键指标最高   : model_3 (ligand_iptm 0.982)  <- 按蛋白-配体界面质量 (ligand_iptm)优先
+    · 结论 : 整体可信。若需全局最优，推荐 model_0；若更关注蛋白-配体界面质量 (ligand_iptm)，推荐 model_3。
 ```
 
 ---
