@@ -194,6 +194,11 @@ $SCHRODINGER/utilities/structcat -imae boltz_results_8_affinity/predictions/8_af
 
 ```bash
 python boltz_confidence_summary.py -i ${input}.yaml -o ${input}_boltz_confidence.csv
+```
+比如：
+
+```bash
+boltz_confidence_summary.py -i 190-amyr3.yaml -o 190-amyr3_confidence.csv
 
 OK: 5 models x 21 metrics -> 190-amyr3_confidence.csv
 
