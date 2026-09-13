@@ -190,6 +190,12 @@ $SCHRODINGER/utilities/structcat -imae boltz_results_8_affinity/predictions/8_af
 
 更详细的后处理说明，请参见文档`sch_boltz_prepwizard.md`。
 
+将模型置信度打分json转为csv格式，并打印打分总结。
+
+```bash
+python boltz_confidence_summary.py -i ${input}.yaml -o ${input}_boltz_confidence.csv
+```
+
 ---
 
 ## 6. 使用注意
