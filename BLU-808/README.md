@@ -15,12 +15,15 @@ MSA: KIT-JMD_uniref.a3m
 ## binding mode prediction
 
 ```
+# BLU-808
 boltz predict BLU808_KIT.yaml \
 --use_potentials \
 --diffusion_samples 10 \
 --sampling_steps 1500 \
 --step_scale 1.5
 
+# cpd 7
+# PDB code: 12FJ
 boltz predict cpd7_KIT.yaml \
 --use_potentials \
 --diffusion_samples 10 \
