@@ -12,10 +12,11 @@ JMD + Kinase domain (545-952): KIT.FASTA
 ## MSA
 MSA: KIT-JMD_uniref.a3m
 
-## binding mode prediction
+## Binding mode prediction
 
 ```
 # BLU-808
+# Bolotz results: boltz_BLU808
 boltz predict BLU808_KIT.yaml \
 --use_potentials \
 --diffusion_samples 10 \
@@ -23,6 +24,7 @@ boltz predict BLU808_KIT.yaml \
 --step_scale 1.5
 
 # cpd 7
+# Boltz results: boltz_cpd7
 # PDB code: 12FJ
 boltz predict cpd7_KIT.yaml \
 --use_potentials \
