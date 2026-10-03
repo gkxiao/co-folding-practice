@@ -6,3 +6,6 @@ cpd 7| Cc1cc(F)c(-c2n[nH]c(C3CC3)n2)cc1NC(=O)c1cnn2cc(F)ccc12
 
 ## KIT construct
 JMD + Kinase domain: 545-952
+
+## MSA
+MSA: KIT-JMD_uniref.a3m
