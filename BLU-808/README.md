@@ -1,3 +1,5 @@
+![BLU-808 and cpd 7 structure](BLU-808-and-cpd-7.png)
+
 ## ligand
 Compound | SMILES
 -------- | ------
